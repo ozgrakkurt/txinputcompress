@@ -3,19 +3,26 @@ const zstd = @cImport(@cInclude("zstd.h"));
 const zdict = @cImport(@cInclude("zdict.h"));
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const lz4 = @cImport(@cInclude("lz4.h"));
 
 pub fn main() !void {
-    const page_sizes = [_]usize{ 1 << 15, 1 << 17, 1 << 19, 1 << 20, 1 << 22 };
+    const index_file_paths = [_][]const u8{ "input.index", "large_input.index", "small_input.index" };
+    const data_file_paths = [_][]const u8{ "input.data", "large_input.data", "small_input.data" };
+    const compression_levels = [_]i32{3};
 
-    for (page_sizes) |page_size| {
-        try run_config(page_size);
+    for (index_file_paths, data_file_paths) |index_file_path, data_file_path| {
+        for (compression_levels) |cl| {
+            try run_config(index_file_path, data_file_path, cl);
+        }
     }
 }
 
-fn run_config(page_size: usize) !void {
+const page_size = 512 * 1024;
+
+fn run_config(index_file_path: []const u8, data_file_path: []const u8, compression_level: i32) !void {
     const alloc = std.heap.page_allocator;
 
-    const indices = try read_file(alloc, "input.index", null);
+    const indices = try read_file(alloc, index_file_path, null);
     defer alloc.free(indices);
 
     var parsed_indices = ArrayList(usize).init(alloc);
@@ -53,7 +60,7 @@ fn run_config(page_size: usize) !void {
 
     const data_size = parsed_indices.items[parsed_indices.items.len - 1];
 
-    const data = try read_file(alloc, "input.data", data_size + 1024);
+    const data = try read_file(alloc, data_file_path, data_size + 1024);
     defer alloc.free(data);
 
     var start: usize = 0;
@@ -72,10 +79,10 @@ fn run_config(page_size: usize) !void {
         try pages.append(data[start..data_size]);
     }
 
-    const scratch = try alloc.alloc(u8, zstd.ZSTD_compressBound(@max(1 << 20, page_size)));
+    const scratch = try alloc.alloc(u8, zstd.ZSTD_compressBound(@max(1 << 22, page_size)));
     defer alloc.free(scratch);
 
-    const dict_buffer = try alloc.alloc(u8, 256 * 1024);
+    const dict_buffer = try alloc.alloc(u8, 110 * 1024);
     defer alloc.free(dict_buffer);
 
     // const page_sizes = try alloc.alloc(usize, pages.items.len);
@@ -95,19 +102,30 @@ fn run_config(page_size: usize) !void {
 
     var regular_compressed_size: usize = 0;
     for (pages.items) |page| {
-        const c_len = zstd.ZSTD_compress(scratch.ptr, scratch.len, page.ptr, page.len, 8);
+        const c_len = zstd.ZSTD_compress(scratch.ptr, scratch.len, page.ptr, page.len, compression_level);
+
         if (zstd.ZSTD_isError(c_len) != 0) {
             @panic("failed to compress");
         }
         regular_compressed_size += c_len;
     }
 
-    const c_dict = zstd.ZSTD_createCDict(dict_ref.ptr, dict_ref.len, 8);
+    var lz4_compressed_size: usize = 0;
+    for (pages.items) |page| {
+        const c_len = lz4.LZ4_compress_default(page.ptr, scratch.ptr, @intCast(page.len), @intCast(scratch.len));
+        if (c_len == 0) {
+            @panic("failed lz4 compress");
+        }
+        lz4_compressed_size += @intCast(c_len);
+    }
+
+    const c_dict = zstd.ZSTD_createCDict(dict_ref.ptr, dict_ref.len, compression_level);
     defer {
         _ = zstd.ZSTD_freeCDict(c_dict);
     }
 
     const c_ctx = zstd.ZSTD_createCCtx();
+
     defer {
         _ = zstd.ZSTD_freeCCtx(c_ctx);
     }
@@ -132,11 +150,12 @@ fn run_config(page_size: usize) !void {
         .num_pages = pages.items.len,
         .total_size = data_size,
         .regular_compressed_size = regular_compressed_size,
+        .lz4_compressed_size = lz4_compressed_size,
         .dictionary_size = dict_ref.len,
         .dictionary_compressed_size = dictionary_compressed_size,
     };
 
-    std.debug.print("PAGE_SIZE={d}: {}\n", .{ page_size, stats });
+    std.debug.print("{s}: PAGE_SIZE={d}: {}\n", .{ index_file_path, page_size, stats });
 }
 
 const Stats = struct {
@@ -147,6 +166,7 @@ const Stats = struct {
     num_pages: usize,
     total_size: usize,
     regular_compressed_size: usize,
+    lz4_compressed_size: usize,
     dictionary_size: usize,
     dictionary_compressed_size: usize,
 };

@@ -27,6 +27,10 @@
             .url = "git+https://github.com/allyourcodebase/zstd.git?ref=1.5.6-1#3247ffbcbc31f014027a5776a25c4261054e9fe9",
             .hash = "12200dbfe91946451bab186f584edbec9f9f7fdbcf818ad984b7182fea655b3c10e3",
         },
+        .lz4 = .{
+            .url = "git+https://github.com/allyourcodebase/lz4.git?ref=1.10.0-1#12b7e6d70a54a5c0f984abdde02449aa2131c0f0",
+            .hash = "122070136dfb55e09993ea332aad05eed39a150e624d195bb4397a80531d50a8d176",
+        },
     },
     .paths = .{
         "build.zig",

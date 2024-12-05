@@ -16,6 +16,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     bench.linkLibrary(zstd_dependency.artifact("zstd"));
+    const lz4_dependency = b.dependency("lz4", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    bench.linkLibrary(lz4_dependency.artifact("lz4"));
 
     const run_cmd = b.addRunArtifact(bench);
 
